@@ -1,0 +1,108 @@
+name: E2E — Kubernetes + MPI Operator
+
+# This workflow validates the full deployment stack:
+#   Docker image → Kind cluster → MPI Operator → MPIJob → results CSV
+#
+# It is intentionally NOT in the PR gate because:
+#   - Kind cluster setup takes ~5-10 minutes
+#   - Requires Docker-in-Docker (GitHub runners are constrained)
+#   - Tests infrastructure config, not application logic
+#     (application logic is covered by the `mpi` job in ci.yml)
+#
+# Run it:
+#   - Manually via workflow_dispatch (pre-release verification)
+#   - Automatically on version tags (v*)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  e2e-kind-mpi:
+    name: Kind cluster + MPI Operator end-to-end
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Build Docker image ──────────────────────────────────────────────
+      - name: Build Docker image
+        run: docker build -t hft-engine:ci .
+
+      # ── Install tools ───────────────────────────────────────────────────
+      - name: Install kind and kubectl
+        run: |
+          # kind
+          curl -sLo /usr/local/bin/kind \
+            "https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64"
+          chmod +x /usr/local/bin/kind
+
+          # kubectl
+          curl -sLO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+      # ── Create cluster ──────────────────────────────────────────────────
+      - name: Create Kind cluster (3 nodes)
+        run: |
+          kind create cluster \
+            --name hft-ci \
+            --config k8s/kind-config-ci.yaml \
+            --wait 90s
+
+      # ── Load image into cluster ─────────────────────────────────────────
+      - name: Load Docker image into Kind
+        run: kind load docker-image hft-engine:ci --name hft-ci
+
+      # ── Install MPI Operator ────────────────────────────────────────────
+      - name: Install Kubeflow MPI Operator v0.5.0
+        run: |
+          kubectl apply -f \
+            https://raw.githubusercontent.com/kubeflow/mpi-operator/v0.5.0/deploy/v2beta1/mpi-operator.yaml
+          kubectl wait --for=condition=available \
+            deployment/mpi-operator \
+            -n mpi-operator \
+            --timeout=120s
+
+      # ── Deploy MPIJob ───────────────────────────────────────────────────
+      - name: Submit scaled-down MPIJob (2 ranks)
+        run: kubectl apply -f k8s/mpijob-ci.yaml
+
+      # ── Wait for completion ─────────────────────────────────────────────
+      - name: Wait for MPIJob to complete (10 min timeout)
+        run: |
+          echo "Waiting for MPIJob hft-backtest-ci to complete..."
+          kubectl wait mpijob/hft-backtest-ci \
+            --for=condition=Succeeded \
+            --timeout=600s || {
+            echo "=== MPIJob did not succeed — dumping pod logs ==="
+            kubectl get pods -l app=hft-engine
+            kubectl logs -l app=hft-engine --prefix=true --tail=50 || true
+            exit 1
+          }
+          echo "MPIJob completed successfully."
+
+      # ── Validate output ─────────────────────────────────────────────────
+      - name: Check launcher pod produced results CSV
+        run: |
+          LAUNCHER=$(kubectl get pods \
+            -l app=hft-engine,role=launcher \
+            -o jsonpath='{.items[0].metadata.name}')
+          echo "Launcher pod: $LAUNCHER"
+          kubectl exec "$LAUNCHER" -- test -s /tmp/results.csv
+          kubectl exec "$LAUNCHER" -- head -4 /tmp/results.csv
+
+      # ── Cluster logs on failure ─────────────────────────────────────────
+      - name: Dump all pod logs on failure
+        if: failure()
+        run: |
+          kubectl get pods -A
+          kubectl describe mpijob/hft-backtest-ci || true
+          kubectl logs -l app=hft-engine --prefix=true --tail=100 || true
+
+      # ── Cleanup ─────────────────────────────────────────────────────────
+      - name: Delete Kind cluster
+        if: always()
+        run: kind delete cluster --name hft-ci

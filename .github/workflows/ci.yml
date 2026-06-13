@@ -152,8 +152,8 @@ jobs:
   # ── clang-tidy ──────────────────────────────────────────────────────────────
   # Targeted lints for patterns that matter in HFT code: data races,
   # performance anti-patterns, and bug-prone constructs.
-  # Uses a GCC-generated compile_commands.json — clang-tidy does not need to be
-  # the compiler, only the linter. This avoids libomp-dev / clang++ conflicts.
+  # clang + libomp-dev are installed so CMake's find_package(OpenMP) succeeds
+  # with clang++, enabling clang-analyzer-* checks on the Clang AST.
   clang-tidy:
     name: clang-tidy
     runs-on: ubuntu-24.04
@@ -163,19 +163,20 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y cmake libgtest-dev clang-tidy
+          sudo apt-get install -y cmake libgtest-dev clang clang-tidy libomp-dev
 
-      - name: Configure (GCC build — generates compile_commands.json)
+      - name: Configure (Clang build — generates compile_commands.json)
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Valgrind \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_CXX_COMPILER=clang++
 
       - name: Run clang-tidy
         run: |
           find src -name '*.cpp' | xargs clang-tidy \
             -p build \
-            --checks='bugprone-*,performance-*,concurrency-mt-unsafe' \
+            --checks='bugprone-*,performance-*,concurrency-mt-unsafe,clang-analyzer-*' \
             --warnings-as-errors='bugprone-*,concurrency-*'
 
   # ── Code coverage ───────────────────────────────────────────────────────────
@@ -216,6 +217,75 @@ jobs:
         with:
           files: coverage.info
           fail_ci_if_error: false
+
+  # ── MPI distributed sweep ───────────────────────────────────────────────────
+  # Exercises the full MPI code path: MPI_Init, MPI_Scatter, OpenMP sub-sweep
+  # per rank, MPI_Gather, sort, and CSV output — all on localhost without any
+  # cluster. This validates MPICoordinator logic independently of Kubernetes.
+  # OMP_NUM_THREADS=1 keeps total thread count sane on a 2-CPU runner.
+  mpi:
+    name: MPI distributed sweep (4 ranks)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake libgtest-dev libopenmpi-dev openmpi-bin
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Valgrind -DHFT_USE_MPI=ON
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Run MPI sweep (4 ranks on localhost)
+        env:
+          OMP_NUM_THREADS: "1"
+          OMPI_ALLOW_RUN_AS_ROOT: "1"
+          OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: "1"
+        run: |
+          mpirun -n 4 ./build/hft-engine --mode mpi-sweep --output-csv /tmp/sweep_results.csv
+          test -s /tmp/sweep_results.csv
+          echo "=== Top 3 rows of sweep_results.csv ==="
+          head -4 /tmp/sweep_results.csv
+
+  # ── Kubernetes manifest validation ──────────────────────────────────────────
+  # Validates YAML syntax and Kubernetes API shape for all k8s manifests.
+  # --dry-run=client requires no cluster; it validates resource shape locally.
+  # MPIJob (a CRD) is validated for YAML syntax only — schema validation
+  # happens in the full e2e workflow.
+  k8s-validate:
+    name: k8s manifest validation
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubectl
+        run: |
+          curl -sLO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+      - name: Validate YAML syntax (all manifests)
+        run: |
+          python3 - <<'EOF'
+          import yaml, sys, glob
+          errors = []
+          for path in sorted(glob.glob("k8s/*.yaml")):
+              try:
+                  list(yaml.safe_load_all(open(path)))
+                  print(f"  OK  {path}")
+              except yaml.YAMLError as e:
+                  print(f"  ERR {path}: {e}", file=sys.stderr)
+                  errors.append(path)
+          if errors:
+              sys.exit(1)
+          EOF
+
+      - name: Validate native k8s resources (dry-run, no cluster needed)
+        run: |
+          kubectl apply --dry-run=client -f k8s/prometheus-configmap.yaml
 
   # ── Release build ───────────────────────────────────────────────────────────
   # Verifies that the production binary compiles with full optimizations and

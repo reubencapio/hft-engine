@@ -1,0 +1,79 @@
+# mpijob-ci.yaml — Scaled-down MPIJob for CI/CD e2e tests.
+#
+# Uses 2 workers with 1 slot each (= 2 MPI ranks total) and minimal resource
+# requests sized for a GitHub Actions free runner (2 CPU, 7 GB RAM total).
+# Do NOT use this manifest for production — see mpijob.yaml instead.
+
+apiVersion: kubeflow.org/v2beta1
+kind: MPIJob
+metadata:
+  name: hft-backtest-ci
+  labels:
+    app: hft-engine
+    env: ci
+spec:
+  slotsPerWorker: 1
+
+  runPolicy:
+    cleanPodPolicy: Running
+
+  mpiReplicaSpecs:
+    Launcher:
+      replicas: 1
+      template:
+        metadata:
+          labels:
+            app: hft-engine
+            role: launcher
+        spec:
+          containers:
+            - name: hft-launcher
+              image: hft-engine:ci
+              imagePullPolicy: Never
+              env:
+                - name: MPI_ROLE
+                  value: "launcher"
+                - name: OMP_NUM_THREADS
+                  value: "1"
+                - name: OMPI_ALLOW_RUN_AS_ROOT
+                  value: "1"
+                - name: OMPI_ALLOW_RUN_AS_ROOT_CONFIRM
+                  value: "1"
+              resources:
+                requests:
+                  cpu: "250m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"
+              args: ["--mode", "mpi-sweep", "--output-csv", "/tmp/results.csv"]
+
+    Worker:
+      replicas: 2
+      template:
+        metadata:
+          labels:
+            app: hft-engine
+            role: worker
+        spec:
+          containers:
+            - name: hft-worker
+              image: hft-engine:ci
+              imagePullPolicy: Never
+              env:
+                - name: MPI_ROLE
+                  value: "worker"
+                - name: OMP_NUM_THREADS
+                  value: "1"
+              resources:
+                requests:
+                  cpu: "250m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"
+              readinessProbe:
+                tcpSocket:
+                  port: 22
+                initialDelaySeconds: 5
+                periodSeconds: 10
