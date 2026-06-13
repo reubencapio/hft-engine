@@ -1,0 +1,37 @@
+# ==============================================================================
+# kind-config.yaml — kind (Kubernetes IN Docker) Cluster Configuration
+# ==============================================================================
+# Creates a 5-node cluster: 1 control-plane + 4 workers.
+# The 4 worker nodes map 1:1 to the MPIJob's 4 worker replicas, ensuring
+# each MPI worker pod can be scheduled on a dedicated node.
+#
+# Usage:
+#   kind create cluster --name hft-cluster --config kind-config.yaml
+# ==============================================================================
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+
+nodes:
+  # ── Control Plane ────────────────────────────────────────────────────────
+  - role: control-plane
+    # Expose ports on the host for local development access.
+    extraPortMappings:
+      # NodePort range — allows accessing services via localhost
+      - containerPort: 30000
+        hostPort: 30000
+        protocol: TCP
+      - containerPort: 30001
+        hostPort: 30001
+        protocol: TCP
+      # Prometheus metrics port (if exposed via NodePort service)
+      - containerPort: 30090
+        hostPort: 30090
+        protocol: TCP
+
+  # ── Worker Nodes ─────────────────────────────────────────────────────────
+  # 4 worker nodes to match the MPIJob spec (4 worker replicas).
+  - role: worker
+  - role: worker
+  - role: worker
+  - role: worker

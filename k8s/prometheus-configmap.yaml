@@ -1,0 +1,58 @@
+# ==============================================================================
+# prometheus-configmap.yaml — Prometheus Scrape Configuration
+# ==============================================================================
+# ConfigMap that configures Prometheus to scrape metrics from all HFT engine
+# pods.  The pods expose a /metrics endpoint on port 9090 in Prometheus text
+# exposition format.
+#
+# Deploy into the monitoring namespace alongside Prometheus:
+#   kubectl apply -f prometheus-configmap.yaml -n monitoring
+# ==============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  labels:
+    app: prometheus
+    component: server
+data:
+  prometheus.yml: |
+    # ── Global settings ────────────────────────────────────────────────────
+    global:
+      scrape_interval: 5s        # 5s for near-real-time latency dashboards
+      evaluation_interval: 5s    # Rule evaluation cadence
+      scrape_timeout: 5s
+
+    # ── Scrape targets ─────────────────────────────────────────────────────
+    scrape_configs:
+      # ── HFT Engine pods ─────────────────────────────────────────────────
+      # Discovers pods labelled app=hft-engine and scrapes their Prometheus
+      # metrics endpoint.
+      - job_name: "hft-engine"
+        # Use Kubernetes service discovery to find pods dynamically.
+        kubernetes_sd_configs:
+          - role: pod
+            selectors:
+              - role: pod
+                label: "app=hft-engine"
+        relabel_configs:
+          # Only keep pods that have the app=hft-engine label.
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: hft-engine
+          # Override the scrape port to 9090 (our Prometheus metrics port).
+          - source_labels: [__address__]
+            action: replace
+            regex: (.+):.*
+            replacement: ${1}:9090
+            target_label: __address__
+          # Add the pod name as an instance label for per-pod dashboards.
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: instance
+          # Propagate the role label (launcher / worker) for filtering.
+          - source_labels: [__meta_kubernetes_pod_label_role]
+            target_label: mpi_role
+          # Add namespace label for multi-tenant clusters.
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace

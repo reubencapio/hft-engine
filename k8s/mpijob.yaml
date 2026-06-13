@@ -1,0 +1,111 @@
+# ==============================================================================
+# mpijob.yaml — Kubeflow MPI Operator Job Definition
+# ==============================================================================
+# Deploys the HFT backtesting engine as a distributed MPI workload:
+#   - 1 launcher pod:  orchestrates mpirun
+#   - 4 worker pods:   each with 4 slots (= 16 total MPI ranks)
+#
+# Resource requests == limits → Guaranteed QoS class, which prevents
+# throttling and OOM surprises during latency-sensitive backtesting runs.
+#
+# OpenMP environment variables are configured to bind threads tightly
+# to physical cores, minimising context-switch jitter.
+# ==============================================================================
+
+apiVersion: kubeflow.org/v2beta1
+kind: MPIJob
+metadata:
+  name: hft-backtest
+  labels:
+    app: hft-engine
+spec:
+  # Number of MPI slots per worker pod.  Each slot hosts one MPI rank.
+  slotsPerWorker: 4
+
+  # Do not restart on failure — backtesting is idempotent; we prefer to
+  # investigate failures rather than silently retry.
+  runPolicy:
+    cleanPodPolicy: Running
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Launcher
+  # ─────────────────────────────────────────────────────────────────────────
+  mpiReplicaSpecs:
+    Launcher:
+      replicas: 1
+      template:
+        metadata:
+          labels:
+            app: hft-engine
+            role: launcher
+        spec:
+          containers:
+            - name: hft-launcher
+              image: hft-engine:latest
+              # Use Never when loading images directly into kind via
+              # `kind load docker-image`.  Change to IfNotPresent or
+              # Always when using a real container registry.
+              imagePullPolicy: Never
+              env:
+                # Tell entrypoint.sh to run in launcher mode.
+                - name: MPI_ROLE
+                  value: "launcher"
+                # ── OpenMP tuning ──────────────────────────────────────
+                # OMP_NUM_THREADS:  4 threads per MPI rank
+                # OMP_PROC_BIND:    bind threads to nearby cores (L1/L2
+                #                   cache locality)
+                # OMP_PLACES:       one thread per physical core
+                - name: OMP_NUM_THREADS
+                  value: "4"
+                - name: OMP_PROC_BIND
+                  value: "close"
+                - name: OMP_PLACES
+                  value: "cores"
+              resources:
+                # Guaranteed QoS: requests == limits
+                requests:
+                  cpu: "4"
+                  memory: "4Gi"
+                limits:
+                  cpu: "4"
+                  memory: "4Gi"
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Workers
+    # ─────────────────────────────────────────────────────────────────────
+    Worker:
+      replicas: 4
+      template:
+        metadata:
+          labels:
+            app: hft-engine
+            role: worker
+        spec:
+          containers:
+            - name: hft-worker
+              image: hft-engine:latest
+              imagePullPolicy: Never
+              env:
+                # Tell entrypoint.sh to run in worker mode (sshd only).
+                - name: MPI_ROLE
+                  value: "worker"
+                # OpenMP settings — same as launcher for consistency.
+                - name: OMP_NUM_THREADS
+                  value: "4"
+                - name: OMP_PROC_BIND
+                  value: "close"
+                - name: OMP_PLACES
+                  value: "cores"
+              resources:
+                requests:
+                  cpu: "4"
+                  memory: "4Gi"
+                limits:
+                  cpu: "4"
+                  memory: "4Gi"
+              # Health check: verify sshd is accepting connections.
+              readinessProbe:
+                tcpSocket:
+                  port: 22
+                initialDelaySeconds: 5
+                periodSeconds: 10
