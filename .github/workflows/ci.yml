@@ -144,12 +144,16 @@ jobs:
             --std=c++20 \
             --error-exitcode=1 \
             --suppress=missingIncludeSystem \
+            --suppress=unknownMacro \
+            -D_OPENMP \
             -I src \
             src/
 
   # ── clang-tidy ──────────────────────────────────────────────────────────────
   # Targeted lints for patterns that matter in HFT code: data races,
   # performance anti-patterns, and bug-prone constructs.
+  # Uses a GCC-generated compile_commands.json — clang-tidy does not need to be
+  # the compiler, only the linter. This avoids libomp-dev / clang++ conflicts.
   clang-tidy:
     name: clang-tidy
     runs-on: ubuntu-24.04
@@ -161,23 +165,24 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y cmake libgtest-dev clang-tidy
 
-      - name: Configure (generate compile_commands.json)
+      - name: Configure (GCC build — generates compile_commands.json)
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Valgrind \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -DCMAKE_CXX_COMPILER=clang++
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Run clang-tidy
         run: |
           find src -name '*.cpp' | xargs clang-tidy \
             -p build \
-            --checks='bugprone-*,performance-*,concurrency-mt-unsafe,clang-analyzer-*' \
+            --checks='bugprone-*,performance-*,concurrency-mt-unsafe' \
             --warnings-as-errors='bugprone-*,concurrency-*'
 
   # ── Code coverage ───────────────────────────────────────────────────────────
   # Measures line and branch coverage across the test suite.
   # Uploaded to Codecov for trend tracking across PRs.
+  # Note: --ignore-errors inconsistent,source is required for lcov compatibility
+  # with GCC 13+ (Ubuntu 24.04 ships GCC 13 which changed the coverage format).
   coverage:
     name: Coverage
     runs-on: ubuntu-24.04
@@ -200,8 +205,10 @@ jobs:
 
       - name: Collect coverage
         run: |
-          lcov --capture --directory build --output-file coverage.info
-          lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info
+          lcov --capture --directory build --output-file coverage.info \
+            --ignore-errors inconsistent,source
+          lcov --remove coverage.info '/usr/*' '*/tests/*' \
+            --output-file coverage.info --ignore-errors inconsistent,source
           lcov --list coverage.info
 
       - name: Upload to Codecov

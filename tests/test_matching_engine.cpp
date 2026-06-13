@@ -72,7 +72,7 @@ TEST(MatchingEngine, FullFill) {
     MatchingEngine engine;
 
     // Post resting ask at 1000
-    engine.process_order(make_limit(1, Side::Ask, 1000, 100));
+    (void)engine.process_order(make_limit(1, Side::Ask, 1000, 100));
 
     // Aggressive bid at 1000 — full match
     auto trades = engine.process_order(make_limit(2, Side::Bid, 1000, 100));
@@ -96,7 +96,7 @@ TEST(MatchingEngine, PartialFill) {
     MatchingEngine engine;
 
     // Resting ask: 100 shares at 1000
-    engine.process_order(make_limit(1, Side::Ask, 1000, 100));
+    (void)engine.process_order(make_limit(1, Side::Ask, 1000, 100));
 
     // Aggressive bid: 60 shares — partial match
     auto trades = engine.process_order(make_limit(2, Side::Bid, 1000, 60));
@@ -115,7 +115,7 @@ TEST(MatchingEngine, PartialFillAggressorLarger) {
     MatchingEngine engine;
 
     // Resting ask: 50 shares at 1000
-    engine.process_order(make_limit(1, Side::Ask, 1000, 50));
+    (void)engine.process_order(make_limit(1, Side::Ask, 1000, 50));
 
     // Aggressive bid: 100 shares — fills 50, posts remainder 50 as bid
     auto trades = engine.process_order(make_limit(2, Side::Bid, 1000, 100));
@@ -135,9 +135,9 @@ TEST(MatchingEngine, PartialFillAggressorLarger) {
 TEST(MatchingEngine, MultiLevelFill) {
     MatchingEngine engine;
 
-    engine.process_order(make_limit(1, Side::Ask, 1000, 30));
-    engine.process_order(make_limit(2, Side::Ask, 1001, 40));
-    engine.process_order(make_limit(3, Side::Ask, 1002, 50));
+    (void)engine.process_order(make_limit(1, Side::Ask, 1000, 30));
+    (void)engine.process_order(make_limit(2, Side::Ask, 1001, 40));
+    (void)engine.process_order(make_limit(3, Side::Ask, 1002, 50));
 
     // Market buy for 100 — should consume from 1000, then 1001, then 1002
     auto trades = engine.process_order(make_market(4, Side::Bid, 100));
@@ -166,18 +166,18 @@ TEST(MatchingEngine, MarketOrderEmptyBook) {
 TEST(MatchingEngine, CancelReducesQuantity) {
     MatchingEngine engine;
 
-    engine.process_order(make_limit(1, Side::Bid, 1000, 100));
+    (void)engine.process_order(make_limit(1, Side::Bid, 1000, 100));
     EXPECT_EQ(engine.book().best_bid_qty(), 100);
 
-    engine.process_order(make_cancel(1, Side::Bid, 1000, 50));
+    (void)engine.process_order(make_cancel(1, Side::Bid, 1000, 50));
     EXPECT_EQ(engine.book().best_bid_qty(), 50);
 }
 
 TEST(MatchingEngine, CancelFullQuantityRemovesLevel) {
     MatchingEngine engine;
 
-    engine.process_order(make_limit(1, Side::Bid, 1000, 100));
-    engine.process_order(make_cancel(1, Side::Bid, 1000, 100));
+    (void)engine.process_order(make_limit(1, Side::Bid, 1000, 100));
+    (void)engine.process_order(make_cancel(1, Side::Bid, 1000, 100));
 
     EXPECT_EQ(engine.book().best_bid(), 0);
     EXPECT_EQ(engine.book().num_bids(), 0u);
@@ -188,8 +188,8 @@ TEST(MatchingEngine, CancelFullQuantityRemovesLevel) {
 TEST(MatchingEngine, Reset) {
     MatchingEngine engine;
 
-    engine.process_order(make_limit(1, Side::Bid, 1000, 100));
-    engine.process_order(make_limit(2, Side::Ask, 1010, 200));
+    (void)engine.process_order(make_limit(1, Side::Bid, 1000, 100));
+    (void)engine.process_order(make_limit(2, Side::Ask, 1010, 200));
 
     engine.reset();
 
@@ -203,8 +203,8 @@ TEST(MatchingEngine, Reset) {
 TEST(MatchingEngine, LatencyHistogramUpdated) {
     MatchingEngine engine;
 
-    engine.process_order(make_limit(1, Side::Ask, 1000, 100));
-    engine.process_order(make_limit(2, Side::Bid, 1000, 100));
+    (void)engine.process_order(make_limit(1, Side::Ask, 1000, 100));
+    (void)engine.process_order(make_limit(2, Side::Bid, 1000, 100));
 
     // Two process_order calls → at least 2 histogram entries
     EXPECT_GE(engine.latency_histogram().count(), 2u);
