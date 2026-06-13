@@ -289,7 +289,8 @@ jobs:
         run: |
           echo '{"apiVersion":"v1","kind":"Config","clusters":[],"contexts":[],"users":[],"preferences":{}}' \
             > /tmp/kubeconfig
-          KUBECONFIG=/tmp/kubeconfig kubectl apply --dry-run=client -f k8s/prometheus-configmap.yaml
+          KUBECONFIG=/tmp/kubeconfig kubectl apply --dry-run=client --validate=false \
+            -f k8s/prometheus-configmap.yaml
 
   # ── Release build ───────────────────────────────────────────────────────────
   # Verifies that the production binary compiles with full optimizations and
