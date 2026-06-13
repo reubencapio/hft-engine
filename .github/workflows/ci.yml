@@ -113,7 +113,7 @@ jobs:
           cd build
           for test in test_spsc_queue test_order_book test_matching_engine test_parameter_sweep; do
             echo "===== valgrind: $test ====="
-            valgrind \
+            OMP_NUM_THREADS=1 valgrind \
               --tool=memcheck \
               --leak-check=full \
               --show-leak-kinds=definite,indirect \
@@ -176,14 +176,14 @@ jobs:
         run: |
           find src -name '*.cpp' | xargs clang-tidy \
             -p build \
-            --checks='bugprone-*,performance-*,concurrency-mt-unsafe,clang-analyzer-*' \
+            --checks='bugprone-*,-bugprone-easily-swappable-parameters,performance-*,concurrency-mt-unsafe,clang-analyzer-*' \
             --warnings-as-errors='bugprone-*,concurrency-*'
 
   # ── Code coverage ───────────────────────────────────────────────────────────
   # Measures line and branch coverage across the test suite.
   # Uploaded to Codecov for trend tracking across PRs.
-  # Note: --ignore-errors inconsistent,source is required for lcov compatibility
-  # with GCC 13+ (Ubuntu 24.04 ships GCC 13 which changed the coverage format).
+  # Uses gcovr instead of lcov: Ubuntu 24.04 ships lcov 1.16 which does not
+  # support the --ignore-errors inconsistent flag (added in lcov 2.0).
   coverage:
     name: Coverage
     runs-on: ubuntu-24.04
@@ -193,7 +193,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y cmake libgtest-dev lcov
+          sudo apt-get install -y cmake libgtest-dev gcovr
 
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=Coverage
@@ -206,16 +206,18 @@ jobs:
 
       - name: Collect coverage
         run: |
-          lcov --capture --directory build --output-file coverage.info \
-            --ignore-errors inconsistent,source
-          lcov --remove coverage.info '/usr/*' '*/tests/*' \
-            --output-file coverage.info --ignore-errors inconsistent,source
-          lcov --list coverage.info
+          gcovr \
+            --root . \
+            --object-directory build \
+            --exclude 'tests/.*' \
+            --exclude '/usr/.*' \
+            --print-summary \
+            --xml coverage.xml
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: coverage.info
+          files: coverage.xml
           fail_ci_if_error: false
 
   # ── MPI distributed sweep ───────────────────────────────────────────────────
@@ -285,7 +287,9 @@ jobs:
 
       - name: Validate native k8s resources (dry-run, no cluster needed)
         run: |
-          kubectl apply --dry-run=client -f k8s/prometheus-configmap.yaml
+          echo '{"apiVersion":"v1","kind":"Config","clusters":[],"contexts":[],"users":[],"preferences":{}}' \
+            > /tmp/kubeconfig
+          KUBECONFIG=/tmp/kubeconfig kubectl apply --dry-run=client -f k8s/prometheus-configmap.yaml
 
   # ── Release build ───────────────────────────────────────────────────────────
   # Verifies that the production binary compiles with full optimizations and

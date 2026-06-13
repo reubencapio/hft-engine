@@ -88,6 +88,8 @@ endif()
 
 # ─── MPI Coordinator (optional) ─────────────────────────────────────────────
 if(HFT_USE_MPI)
+    target_link_libraries(hft_core PUBLIC MPI::MPI_CXX)
+
     add_library(hft_mpi STATIC
         src/backtest/mpi_coordinator.cpp
     )

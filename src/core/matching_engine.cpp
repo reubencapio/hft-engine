@@ -110,7 +110,7 @@ std::vector<Trade> MatchingEngine::do_match(Order& order) noexcept {
             const int64_t  fill_qty         = std::min(order.quantity, ask_qty);
             const uint64_t passive_order_id = book_.best_ask_order_id();
 
-            Trade t;
+            Trade t{};
             t.buy_order_id   = order.order_id;
             t.sell_order_id  = passive_order_id;
             t.price          = best_ask;
@@ -135,7 +135,7 @@ std::vector<Trade> MatchingEngine::do_match(Order& order) noexcept {
             const int64_t  fill_qty         = std::min(order.quantity, bid_qty);
             const uint64_t passive_order_id = book_.best_bid_order_id();
 
-            Trade t;
+            Trade t{};
             t.buy_order_id   = passive_order_id;
             t.sell_order_id  = order.order_id;
             t.price          = best_bid;
