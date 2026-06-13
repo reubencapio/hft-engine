@@ -1,0 +1,238 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ── AddressSanitizer ────────────────────────────────────────────────────────
+  # Catches heap/stack overflows, use-after-free, and use-after-return.
+  # This is the first gate: no PR merges with ASAN failures.
+  asan:
+    name: AddressSanitizer
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake libgtest-dev
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Test
+        run: cd build && ctest --output-on-failure
+
+  # ── ThreadSanitizer ─────────────────────────────────────────────────────────
+  # Detects data races between threads. OMP_NUM_THREADS=1 forces the OpenMP
+  # runtime onto a single thread, avoiding known false-positives in libgomp
+  # while still exercising the MatchingEngine's own threading.
+  tsan:
+    name: ThreadSanitizer
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake libgtest-dev
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=TSan
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Test
+        env:
+          OMP_NUM_THREADS: "1"
+          TSAN_OPTIONS: "halt_on_error=1 second_deadlock_stack=1"
+        run: cd build && ctest --output-on-failure
+
+  # ── UndefinedBehaviorSanitizer ──────────────────────────────────────────────
+  # Catches signed integer overflow, out-of-bounds shifts, null dereference,
+  # misaligned loads — all sources of silent corruption in hot-path C++.
+  ubsan:
+    name: UndefinedBehaviorSanitizer
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake libgtest-dev
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=UBSan
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Test
+        env:
+          UBSAN_OPTIONS: "halt_on_error=1 print_stacktrace=1"
+        run: cd build && ctest --output-on-failure
+
+  # ── Valgrind memcheck ───────────────────────────────────────────────────────
+  # Full memory analysis: definite and indirect leaks, uninitialized reads,
+  # invalid frees. Runs on a sanitizer-free binary so Valgrind can instrument
+  # every instruction without interference.
+  valgrind:
+    name: Valgrind memcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake libgtest-dev valgrind
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Valgrind
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Run Valgrind
+        run: |
+          cd build
+          for test in test_spsc_queue test_order_book test_matching_engine test_parameter_sweep; do
+            echo "===== valgrind: $test ====="
+            valgrind \
+              --tool=memcheck \
+              --leak-check=full \
+              --show-leak-kinds=definite,indirect \
+              --track-origins=yes \
+              --error-exitcode=1 \
+              --suppressions=/usr/share/valgrind/default.supp \
+              ./$test
+          done
+
+  # ── cppcheck static analysis ────────────────────────────────────────────────
+  # Language-level static analysis: undefined behaviour patterns, null deref,
+  # division by zero, buffer overruns that sanitizers won't catch until runtime.
+  cppcheck:
+    name: cppcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        run: |
+          cppcheck \
+            --enable=warning,performance,portability \
+            --std=c++20 \
+            --error-exitcode=1 \
+            --suppress=missingIncludeSystem \
+            -I src \
+            src/
+
+  # ── clang-tidy ──────────────────────────────────────────────────────────────
+  # Targeted lints for patterns that matter in HFT code: data races,
+  # performance anti-patterns, and bug-prone constructs.
+  clang-tidy:
+    name: clang-tidy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake libgtest-dev clang-tidy
+
+      - name: Configure (generate compile_commands.json)
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Valgrind \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Run clang-tidy
+        run: |
+          find src -name '*.cpp' | xargs clang-tidy \
+            -p build \
+            --checks='bugprone-*,performance-*,concurrency-mt-unsafe,clang-analyzer-*' \
+            --warnings-as-errors='bugprone-*,concurrency-*'
+
+  # ── Code coverage ───────────────────────────────────────────────────────────
+  # Measures line and branch coverage across the test suite.
+  # Uploaded to Codecov for trend tracking across PRs.
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake libgtest-dev lcov
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Coverage
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Test
+        run: cd build && ctest --output-on-failure
+
+      - name: Collect coverage
+        run: |
+          lcov --capture --directory build --output-file coverage.info
+          lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info
+          lcov --list coverage.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.info
+          fail_ci_if_error: false
+
+  # ── Release build ───────────────────────────────────────────────────────────
+  # Verifies that the production binary compiles with full optimizations and
+  # runs without crashing on synthetic data. This is the binary that would be
+  # deployed to co-lo.
+  release:
+    name: Release build + smoke test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake libgtest-dev
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DHFT_BUILD_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Smoke test — backtest mode
+        run: ./build/hft-engine --mode backtest
+
+      - name: Smoke test — sweep mode
+        run: ./build/hft-engine --mode sweep

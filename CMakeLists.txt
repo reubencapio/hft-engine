@@ -21,6 +21,19 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_options(-g -O0 -fsanitize=address -fno-omit-frame-pointer)
     add_link_options(-fsanitize=address)
+elseif(CMAKE_BUILD_TYPE STREQUAL "TSan")
+    # ThreadSanitizer — detects data races. Use OMP_NUM_THREADS=1 when
+    # running tests to avoid false positives from the OpenMP runtime.
+    add_compile_options(-g -O1 -fsanitize=thread -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=thread)
+elseif(CMAKE_BUILD_TYPE STREQUAL "UBSan")
+    # UndefinedBehaviorSanitizer — catches signed overflow, null deref, etc.
+    add_compile_options(-g -O1 -fsanitize=undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=undefined)
+elseif(CMAKE_BUILD_TYPE STREQUAL "Coverage")
+    # gcov instrumentation for lcov/gcovr coverage reports.
+    add_compile_options(-g -O0 --coverage -fprofile-arcs -ftest-coverage)
+    add_link_options(--coverage)
 elseif(CMAKE_BUILD_TYPE STREQUAL "Valgrind")
     # Plain debug build — no sanitizers so Valgrind can attach cleanly.
     add_compile_options(-g -O0 -fno-omit-frame-pointer)
