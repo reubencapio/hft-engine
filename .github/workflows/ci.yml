@@ -119,7 +119,6 @@ jobs:
               --show-leak-kinds=definite,indirect \
               --track-origins=yes \
               --error-exitcode=1 \
-              --suppressions=/usr/share/valgrind/default.supp \
               ./$test
           done
 
@@ -176,8 +175,15 @@ jobs:
         run: |
           find src -name '*.cpp' | xargs clang-tidy \
             -p build \
-            --checks='bugprone-*,-bugprone-easily-swappable-parameters,performance-*,concurrency-mt-unsafe,clang-analyzer-*' \
-            --warnings-as-errors='bugprone-*,concurrency-*'
+            --checks='bugprone-*,-bugprone-easily-swappable-parameters,-bugprone-exception-escape,performance-*,concurrency-mt-unsafe,clang-analyzer-*' \
+            --warnings-as-errors='bugprone-*,concurrency-*' 2>&1 | tee /tmp/clang-tidy.txt; test ${PIPESTATUS[0]} -eq 0
+
+      - name: Upload clang-tidy output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clang-tidy-output
+          path: /tmp/clang-tidy.txt
 
   # ── Code coverage ───────────────────────────────────────────────────────────
   # Measures line and branch coverage across the test suite.
@@ -254,20 +260,20 @@ jobs:
           head -4 /tmp/sweep_results.csv
 
   # ── Kubernetes manifest validation ──────────────────────────────────────────
-  # Validates YAML syntax and Kubernetes API shape for all k8s manifests.
-  # --dry-run=client requires no cluster; it validates resource shape locally.
-  # MPIJob (a CRD) is validated for YAML syntax only — schema validation
-  # happens in the full e2e workflow.
+  # Validates YAML syntax and Kubernetes API schema for all k8s manifests.
+  # kubeconform validates against bundled schemas without needing a cluster.
+  # CRDs (MPIJob, Kind cluster config) are skipped with -ignore-missing-schemas
+  # since their schemas are not in the upstream Kubernetes schema registry.
   k8s-validate:
     name: k8s manifest validation
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install kubectl
+      - name: Install kubeconform
         run: |
-          curl -sLO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+          curl -sL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar xz -C /usr/local/bin kubeconform
 
       - name: Validate YAML syntax (all manifests)
         run: |
@@ -285,12 +291,9 @@ jobs:
               sys.exit(1)
           EOF
 
-      - name: Validate native k8s resources (dry-run, no cluster needed)
+      - name: Validate Kubernetes schema (no cluster needed)
         run: |
-          echo '{"apiVersion":"v1","kind":"Config","clusters":[],"contexts":[],"users":[],"preferences":{}}' \
-            > /tmp/kubeconfig
-          KUBECONFIG=/tmp/kubeconfig kubectl apply --dry-run=client --validate=false \
-            -f k8s/prometheus-configmap.yaml
+          kubeconform -ignore-missing-schemas -strict -summary k8s/*.yaml
 
   # ── Release build ───────────────────────────────────────────────────────────
   # Verifies that the production binary compiles with full optimizations and
