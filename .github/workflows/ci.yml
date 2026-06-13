@@ -248,7 +248,7 @@ jobs:
           OMPI_ALLOW_RUN_AS_ROOT: "1"
           OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: "1"
         run: |
-          mpirun -n 4 ./build/hft-engine --mode mpi-sweep --output-csv /tmp/sweep_results.csv
+          mpirun -n 4 --oversubscribe ./build/hft-engine --mode mpi-sweep --output-csv /tmp/sweep_results.csv
           test -s /tmp/sweep_results.csv
           echo "=== Top 3 rows of sweep_results.csv ==="
           head -4 /tmp/sweep_results.csv
