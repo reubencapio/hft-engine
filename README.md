@@ -4,6 +4,36 @@
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)
 ![OpenMP](https://img.shields.io/badge/OpenMP-5.2-green)
 
+## What is this?
+
+A research platform for testing high-frequency trading strategies on historical market data — before risking real money.
+
+**The core problem it solves:** You have a trading idea (e.g. *quote both sides of a stock all day and collect the spread*). How do you know if it actually makes money? What settings work best? What's the worst losing streak you'd have to survive? This project answers those questions by replaying real exchange data through your strategy and automatically finding the best parameter combination.
+
+### Example use case
+
+You want to run a market making strategy on AAPL: buy at $149.99, sell at $150.01, collect the $0.02 spread when both sides fill. But you don't know:
+- Is $0.02 the right spread, or does tighter/wider work better?
+- How large should each order be?
+- Does the strategy hold up across different market conditions?
+
+With hft-engine you:
+
+1. Download a NASDAQ ITCH file — the exact order-by-order record of everything that happened on the exchange that day
+2. Run a parameter sweep that automatically tests every combination of spread width, order size, and signal thresholds across all your CPU cores
+3. Get a CSV ranked by Sharpe ratio showing what would have worked
+
+```
+spread_ticks,order_qty,sharpe,max_drawdown,total_pnl
+2,50,1.82,-120.50,+3450.00   ← best risk-adjusted return
+3,50,1.65,-95.20,+2890.00
+1,50,0.43,-890.00,+410.00    ← too tight, gets picked off by fast movers
+```
+
+You validate the top combinations on different days, then paper trade, then go live with small size. The infrastructure (lock-free queues, nanosecond latency measurement, MPI distribution) is built the same way production HFT systems are — so the habits and patterns you develop here transfer directly.
+
+---
+
 A low-latency C++20 matching engine and backtesting framework built for high-frequency trading research. Designed around the same primitives used in production HFT systems: lock-free queues, RDTSC-based latency measurement, price-time priority matching, and OpenMP/MPI parallel parameter sweeps.
 
 ## Architecture
